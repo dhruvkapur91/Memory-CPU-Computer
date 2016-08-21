@@ -1,0 +1,89 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/05/CPU.hdl
+
+/**
+ * The Hack CPU (Central Processing unit), consisting of an ALU,
+ * two registers named A and D, and a program counter named PC.
+ * The CPU is designed to fetch and execute instructions written in 
+ * the Hack machine language. In particular, functions as follows:
+ * Executes the inputted instruction according to the Hack machine 
+ * language specification. The D and A in the language specification
+ * refer to CPU-resident registers, while M refers to the external
+ * memory location addressed by A, i.e. to Memory[A]. The inM input 
+ * holds the value of this location. If the current instruction needs 
+ * to write a value to M, the value is placed in outM, the address 
+ * of the target location is placed in the addressM output, and the 
+ * writeM control bit is asserted. (When writeM==0, any value may 
+ * appear in outM). The outM and writeM outputs are combinational: 
+ * they are affected instantaneously by the execution of the current 
+ * instruction. The addressM and pc outputs are clocked: although they 
+ * are affected by the execution of the current instruction, they commit 
+ * to their new values only in the next time step. If reset==1 then the 
+ * CPU jumps to address 0 (i.e. pc is set to 0 in next time step) rather 
+ * than to the address resulting from executing the current instruction. 
+ */
+
+// 15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00
+// 1  1  1  a  c1 c2 c3 c4 c5 c6 d1 d2 d3 j1 j2 j3
+//    	       zx nx zy	ny f  no
+
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+    // Put your code here:
+
+    // D register
+    Register(in = outAlu, load = loadD, out = outD);
+
+    // D should be loaded if its a C instruction and d2 bit is asserted
+    And(a = instruction[15], b = instruction[4], out = loadD); // instruction[15] being 1 is C-instruction. instruction[4] is d2...
+
+    // A Register
+    Mux16(a = outAlu, b = instruction, sel = isAInstruction, out = inARegister);
+    Register(in = inARegister, load = loadA, out = outA, out[0..14] = addressM);
+
+    // A should be loaded if its an A instruction or d1 but is asserted
+    Not(in = instruction[15], out = isAInstruction); // not of instruction[15] is A instruction
+    Or(a = isAInstruction, b = instruction[5], out = loadA); // instruction[5] is d1.
+
+    // To compute x and y that shall go to ALU, we need a mux
+    // The mux selects on the 'a' input of C instruction
+    // x input is always D
+    // while y input is A/M, outA when a is false and inM when a is true
+    Mux16(a = outA, b = inM, sel = instruction[12], out = yAlu); // instruction[12] is the 'a' but and if its asserted y is inM else A.
+
+    // Using the ALU :) 
+    ALU(x = outD, y = yAlu, zx = instruction[11], nx = instruction[10], zy = instruction[9], ny = instruction[8], f = instruction[7], no = instruction[6], out = outAlu, out = outM, zr = isOutputZero, ng = isOutputNegative);
+
+    // following is used in the mux...
+    Not(in = isOutputZero, out = isOutputNonZero);
+    Not(in = isOutputNegative, out = isOutputNonNegative);
+
+    And(a = isOutputNonZero, b = isOutputNonNegative, out = isOutputPositive);
+    Or(a = isOutputZero, b = isOutputNegative, out = isOutputZeroOrNegative);
+
+    // First use a mux to see if we match the corresponding jump logic... I think this is clever to use zr and ng as inuts to the mux while jumps as select lines...
+    Mux8Way(a = false, b = isOutputPositive, c = isOutputZero, d = isOutputNonNegative, e = isOutputNegative, f = isOutputNonZero, g = isOutputZeroOrNegative, h = true, sel[2] = instruction[2], sel[1] = instruction[1], sel[0] = instruction[0], out = possiblePCJump);
+
+    And(a = possiblePCJump, b = instruction[15], out = loadPC); // Jump if the jumping conditions satisfy and its also a c instruction... 
+
+    // Program counter...
+    PC(in = outA, load = loadPC, inc = true, reset = reset, out[15] = false, out[0..14] = pc);
+
+    // Write m.. write when d3 and a C instruction
+    And(a = instruction[15], b = instruction[3], out = writeM);
+
+}
